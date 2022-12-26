@@ -1,25 +1,34 @@
 import "bootstrap/dist/css/bootstrap.min.css";
-import { useEffect, useState } from 'react';
+import "react-toastify/dist/ReactToastify.css";
+import './App.css';
+
+import {  useState, useEffect } from 'react';
+import { ethers } from "ethers";
+import {ToastContainer, toast} from "react-toastify";
+
 import WRHeader from 'wrcomponents/dist/WRHeader';
-import WRFooter from 'wrcomponents/dist/WRFooter';
+import WRFooter, { async } from 'wrcomponents/dist/WRFooter';
 import WRInfo from 'wrcomponents/dist/WRInfo';
 import WRContent from 'wrcomponents/dist/WRContent';
 import WRTools from 'wrcomponents/dist/WRTools';
-import { ethers } from "ethers";
-import './App.css';
-import {ToastContainer, toast} from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
-import { _toEscapedUtf8String } from "ethers/lib/utils";
+import Button from "react-bootstrap/Button";
 
+import { format6FirstsAnd6LastsChar } from "./utils";
+import meta from "./assets/metamask.png";
 
 function App() {
+
+  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState({});
+  const [provider, setProvider] = useState();
+  const [signer, setSigner] = useState();
 
   const [addressLawyer, setAddressLawyer] = useState('');
   const [addressBeneficiary, setAddressBeneficiary] = useState('');
   const [fromNow, setFromNow] = useState(0);
   const [balance, setBalance] = useState(0);
 
-  const addressContract = '0xB3a2397158522CCBa79D847787a0e3c19094239D';
+  const contractAddress = '0xDDaC774e20e83a2ffe7933c0623673893fBD7A46';
 
   const abi = [
     {
@@ -109,16 +118,65 @@ function App() {
     }
   ];
   
-  let contractDeployed = null;
-  let contractDeployedSigner = null;
-  
-  function getProvider(){
-    const provider = new ethers.providers.Web3Provider(window.ethereum);
-    if (contractDeployed == null){
-      contractDeployed = new ethers.Contract(addressContract, abi, provider)
+  async function handleConnectWallet (){
+    try {
+      setLoading(true)
+      let prov =  new ethers.providers.Web3Provider(window.ethereum);
+      setProvider(prov);
+
+      let userAcc = await prov.send('eth_requestAccounts', []);
+      setUser({account: userAcc[0], connected: true});
+
+      const contrSig = new ethers.Contract(contractAddress, abi, prov.getSigner())
+      setSigner( contrSig)
+      loadContractData(contrSig);
+    } catch (error) {
+      toastMessage(error.reason)
+    } finally{
+      setLoading(false);
     }
-    if (contractDeployedSigner == null){
-      contractDeployedSigner = new ethers.Contract(addressContract, abi, provider.getSigner());
+  }
+
+  useEffect(() => {
+    
+    async function getData() {
+      try {
+        const {ethereum} = window;
+        if (!ethereum){
+          toastMessage('Metamask not detected');
+        }
+  
+        const goerliChainId = "0x5";
+        const currentChainId = await window.ethereum.request({method: 'eth_chainId'})
+        if (goerliChainId != currentChainId){
+          toastMessage('Change to goerli testnet')
+        }    
+
+      } catch (error) {
+        toastMessage(error.reason)        
+      }
+      
+    }
+
+    getData()  
+    
+  }, [])
+  
+  async function isConnected(){
+    if (!user.connected){
+      toastMessage('You are not connected!')
+      return false;
+    }
+    return true;
+  }
+
+  async function handleDisconnect(){
+    try {
+      setUser({});
+      setSigner(null);
+      setProvider(null);
+    } catch (error) {
+      toastMessage(error.reason)
     }
   }
 
@@ -126,30 +184,33 @@ function App() {
     toast.info(text)  ;
   }
 
-  async function getData() {
-    getProvider();
-    let balanceOf = await contractDeployed.balanceOf();
+
+  async function handleWithdraw(){
+    try {
+      if (!isConnected()) {
+        return;
+      }
+      setLoading(true);
+      const resp  = await signer.withdraw();  
+      await resp.wait();
+      toastMessage('Withdrawn');
+    } catch (error) {
+      toastMessage(error.reason);
+    } finally{
+      setLoading(false);
+    }
+  }
+
+  async function loadContractData(sig){
+    let balanceOf = await sig.balanceOf();
     setBalance(balanceOf);
-    setAddressLawyer(await  contractDeployed.lawyer());
-    setAddressBeneficiary( await contractDeployed.beneficiary());
-    let resp = await contractDeployed.earliest() * 1000;
+    setAddressLawyer(await  sig.lawyer());
+    setAddressBeneficiary( await sig.beneficiary());
+    let resp = await sig.earliest() * 1000;
     let date = new Date(resp);
     let dateFormatted = date.getDate() + "/" + (date.getMonth() + 1) + "/" + date.getFullYear() + "  " + date.getHours() + ":" + date.getMinutes();
     setFromNow(dateFormatted)
-    toastMessage('Data loaded from blockchain')
-  }
- 
-
-  async function handleWithdraw(){
-    getProvider();
-    try {
-      const resp  = await contractDeployedSigner.withdraw();  
-    } catch (error) {
-      toastMessage(error.data.message);
-    }
-    
-    
-
+    toastMessage('load')
   }
 
   return (
@@ -158,24 +219,30 @@ function App() {
       <WRHeader title="Deed" image={true} />
       <WRInfo chain="Goerli testnet" />
       <WRContent>
- 
-        {addressLawyer == '' ?
-          <>
-            <button onClick={getData}>Load data</button>
-          </>
-          : 
-          <>
-          <h2>Deed Info</h2>
-          <h5>Balance: {(balance).toString()} wei</h5>
-          <h5>When free: {(fromNow).toString()}</h5>
-          <h5>Lawyer address: {addressLawyer}</h5>
-          <h5>Beneficiary address: {addressBeneficiary}</h5>
-          <hr/>
-          <h2>Withdraw Funds</h2>
-          <button onClick={handleWithdraw}>Withdraw</button>
-        </>
-        
+        <h1>DEED</h1>
+
+        {loading && 
+          <h1>Loading....</h1>
         }
+        { !user.connected ?<>
+            <Button className="commands" variant="btn btn-primary" onClick={handleConnectWallet}>
+              <img src={meta} alt="metamask" width="30px" height="30px"/>Connect to Metamask
+            </Button></>
+          : <>
+            <label>Welcome {format6FirstsAnd6LastsChar(user.account)}</label>
+            <button className="btn btn-primary commands" onClick={handleDisconnect}>Disconnect</button>
+          </>
+        }
+        <hr/> 
+
+        <h2>Deed Info</h2>
+        <label>Balance: {(balance).toString()} wei</label>
+        <label>When free: {(fromNow).toString()}</label>
+        <label>Lawyer address: {addressLawyer}</label>
+        <label>Beneficiary address: {addressBeneficiary}</label>
+        <hr/>
+        <h2>Withdraw Funds</h2>
+        <button className="btn btn-primary commands" onClick={handleWithdraw}>Withdraw</button>
         
       </WRContent>
       <WRTools react={true} truffle={true} bootstrap={true} solidity={true} css={true} javascript={true} ganache={true} ethersjs={true} />
